@@ -1,0 +1,10 @@
+```gitignore
+__pycache__/
+*.pyc
+.env
+.venv
+venv/
+.env
+.streamlit/
+.DS_Store
+Thumbs.db
