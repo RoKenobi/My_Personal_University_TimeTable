@@ -15,3 +15,4 @@ For this you need to scrape data and organise them into these files below
 1. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   streamlit run plan_app.py
