@@ -1,6 +1,7 @@
 # NTU Timetable Optimizer
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://mypersonaluniversitytimetable-enp7m5xreztijjdlusqtwo.streamlit.app/)
 
-Optimizes your NUS course timetable to **minimize campus days** while avoiding time conflicts.
+Optimizes your NTU my course timetable to **minimize campus days** while avoiding time conflicts.
 
 ## 🛠️ Requirements
 - Python 3.8+
