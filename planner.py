@@ -1,7 +1,14 @@
 import pandas as pd
 from ortools.sat.python import cp_model
 
-
+# Try to import tkinter, but handle if it's not available
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    TK_AVAILABLE = True
+except ImportError:
+    TK_AVAILABLE = False
+    print("GUI not available. Using console input instead.")
 
 
 # ============================================================
@@ -283,6 +290,7 @@ def build_model(lectures, index_map, selected_courses):
 
 def solve(lectures, index_map, selected_courses, num_solutions=3):
     model, chosen, campus_day = build_model(lectures, index_map, selected_courses)
+
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 10
     
@@ -320,77 +328,46 @@ def solve(lectures, index_map, selected_courses, num_solutions=3):
     collector = SolutionCollector(chosen, campus_day, num_solutions)
     
     # Enable solution enumeration
+    # Note: For problems with tight constraints, there may be only one optimal solution
+    # We'll collect multiple feasible solutions if available
     solver.parameters.enumerate_all_solutions = True
     
     # Solve with solution collection
     result = solver.Solve(model, collector)
     
+    print("\nSolver status:", solver.StatusName(result))
+    
     # Use collected solutions
     solutions = collector.solutions
     
     if not solutions:
-        conflict_msg = analyze_infeasibility(lectures, index_map, selected_courses)
-        return {"success": False, "error": conflict_msg}
+        print("No feasible solution found!")
+        analyze_infeasibility(lectures, index_map, selected_courses)
+        return None
     
     # Sort solutions by number of campus days (ascending)
     solutions.sort(key=lambda s: s["campus_days"])
     
-    # Return the best solution (lowest campus days)
-    best_solution = solutions[0]
+    # --------------------------------------
+    # Output multiple solutions
+    # --------------------------------------
+    num_found = min(num_solutions, len(solutions))
+    if num_found == 1:
+        print(f"\n=== Found 1 Optimal Solution ===")
+    else:
+        print(f"\n=== Top {num_found} Optimal Solutions ===")
     
-    # Build chosen indexes for best solution
-    chosen_indexes = {}
-    for (course, idx), val in best_solution["chosen"].items():
-        if val == 1:
-            chosen_indexes[course] = idx
-
-    # Build weekly timetable (simplified) for best solution
-    timetable = []
-    for (course, idx), val in best_solution["chosen"].items():
-        if val == 1:
-            for session in index_map[(course, idx)]:
-                timetable.append({
-                    "course": course,
-                    "type": session["type"],
-                    "day": session["day"],
-                    "start": session["start"],
-                    "end": session["end"],
-                    "weeks": session["weeks"]
-                })
-    # Add lectures
-    for lec in lectures:
-        timetable.append({
-            "course": lec["course"],
-            "type": lec["type"],
-            "day": lec["day"],
-            "start": lec["start"],
-            "end": lec["end"],
-            "weeks": lec["weeks"]
-        })
-
-    # Count campus days for best solution
-    campus_days = best_solution["campus_days"]
-
-    # Prepare multiple solutions data for frontend
-    multiple_solutions = []
     for i, solution in enumerate(solutions[:num_solutions]):
-        sol_data = {
-            "rank": i + 1,
-            "campus_days": solution["campus_days"],
-            "indexes": {}
-        }
+        print(f"\n--- Solution #{i+1} ({solution['campus_days']} campus days) ---")
         for (course, idx), val in solution["chosen"].items():
             if val == 1:
-                sol_data["indexes"][course] = idx
-        multiple_solutions.append(sol_data)
-
-    return {
-        "success": True,
-        "indexes": chosen_indexes,
-        "timetable": timetable,
-        "campus_days": campus_days,
-        "multiple_solutions": multiple_solutions
-    }
+                print(f"  {course}: Index {idx}")
+    
+    # Only show note if we found fewer solutions than requested
+    if num_found < num_solutions and num_solutions > 1:
+        print(f"\n(Note: Only {num_found} feasible solution(s) found for these courses)")
+    
+    return solutions[:num_solutions]
 
 def check_solution_conflicts(lectures, index_map, chosen, solver):
     """Check for conflicts in the current solution."""
@@ -510,7 +487,8 @@ def calculate_campus_days_for_weeks(lectures, index_map, chosen, solver, target_
     return len(campus_days)
 
 def analyze_infeasibility(lectures, index_map, selected_courses):
-    """Analyze why a solution is infeasible and return a concise conflict message."""
+    """Analyze why a solution is infeasible."""
+    print("\n=== Infeasibility Analysis ===")
     
     # Show just the first major conflict to keep it simple
     for course in selected_courses:
@@ -527,7 +505,8 @@ def analyze_infeasibility(lectures, index_map, selected_courses):
                     for session in sessions:
                         if strict_conflict(lec, session):
                             if lec["weeks"].intersection(session["weeks"]):
-                                return f"Conflict: {course} lecture clashes with {other_course} {session['type']} (Index {idx})"
+                                print(f"❌ Conflict: {course} lecture clashes with {other_course} {session['type']} (Index {idx})")
+                                return  # Just show the first conflict
     
     # If no lecture conflicts, check index vs index conflicts
     course_pairs = [(c1, c2) for i, c1 in enumerate(selected_courses) for c2 in selected_courses[i+1:]]
@@ -544,13 +523,136 @@ def analyze_infeasibility(lectures, index_map, selected_courses):
                     for s2 in sessions2:
                         if strict_conflict(s1, s2):
                             if s1["weeks"].intersection(s2["weeks"]):
-                                return f"Conflict: {c1} Index {idx1} clashes with {c2} Index {idx2}"
+                                print(f"❌ Conflict: {c1} Index {idx1} clashes with {c2} Index {idx2}")
+                                return  # Just show the first conflict
     
-    return "No feasible schedule found due to timing conflicts"
+    print("❌ No feasible schedule found due to timing conflicts")
 
 # ============================================================
-# console for course selection
+# GUI/console for course selection
 # ============================================================
+
+def select_courses(available_courses):
+    """Select courses using GUI if available, otherwise console input."""
+    print(f"Available courses: {sorted(available_courses)}")
+    if TK_AVAILABLE:
+        print("GUI is available, attempting to show course selection dialog...")
+        return select_courses_gui(available_courses)
+    else:
+        print("GUI not available, using console input...")
+        return select_courses_console(available_courses)
+
+def select_courses_gui(available_courses):
+    """Create a GUI popup for users to select courses."""
+    try:
+        print("Creating Tkinter root window...")
+        root = tk.Tk()
+        root.title("Course Selection")
+        root.geometry("400x500")
+        root.resizable(True, True)
+        
+        # Store selected courses
+        selected_courses = []
+        
+        # Create a frame for the course list
+        frame = ttk.Frame(root, padding="10")
+        frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        # Configure grid weights
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        
+        # Title
+        title_label = ttk.Label(frame, text="Select Courses to Register For:", font=("Arial", 12, "bold"))
+        title_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 10))
+        
+        # Instructions
+        instruction_label = ttk.Label(frame, text="Select at least 2 courses:")
+        instruction_label.grid(row=1, column=0, sticky=tk.W, pady=(0, 10))
+        
+        # Create a canvas and scrollbar for the course list
+        canvas = tk.Canvas(frame)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Create checkboxes for each course (initially unchecked)
+        course_vars = {}
+        sorted_courses = sorted(available_courses)
+        for i, course in enumerate(sorted_courses):
+            var = tk.BooleanVar(value=False)  # Explicitly set to False
+            course_vars[course] = var
+            checkbox = ttk.Checkbutton(scrollable_frame, text=course, variable=var)
+            checkbox.grid(row=i, column=0, sticky=tk.W, padx=5, pady=2)
+        
+        canvas.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        scrollbar.grid(row=2, column=1, sticky=(tk.N, tk.S))
+        
+        # Button frame
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=3, column=0, columnspan=2, pady=10)
+        
+        def submit_selection():
+            selected = [course for course, var in course_vars.items() if var.get()]
+            print(f"User selected courses: {selected}")
+            if len(selected) < 2:
+                messagebox.showwarning("Insufficient Selection", "Please select at least 2 courses.")
+                return
+            selected_courses.extend(selected)
+            root.destroy()
+        
+        def select_all():
+            for var in course_vars.values():
+                var.set(True)
+        
+        def deselect_all():
+            for var in course_vars.values():
+                var.set(False)
+        
+        # Buttons
+        submit_btn = ttk.Button(button_frame, text="Generate Timetable", command=submit_selection)
+        submit_btn.pack(side=tk.RIGHT, padx=5)
+        
+        select_all_btn = ttk.Button(button_frame, text="Select All", command=select_all)
+        select_all_btn.pack(side=tk.LEFT, padx=5)
+        
+        deselect_all_btn = ttk.Button(button_frame, text="Deselect All", command=deselect_all)
+        deselect_all_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Handle window closing
+        def on_closing():
+            print("Window closing...")
+            if messagebox.askokcancel("Quit", "Do you want to quit without generating a timetable?"):
+                root.destroy()
+                selected_courses.clear()  # Clear to indicate cancellation
+        
+        root.protocol("WM_DELETE_WINDOW", on_closing)
+        
+        # Center the window
+        root.update_idletasks()
+        x = (root.winfo_screenwidth() // 2) - (root.winfo_width() // 2)
+        y = (root.winfo_screenheight() // 2) - (root.winfo_height() // 2)
+        root.geometry(f"+{x}+{y}")
+        
+        print("Starting mainloop... Please interact with the GUI window.")
+        root.mainloop()
+        print(f"Mainloop ended. Selected courses: {selected_courses}")
+        
+        return selected_courses if selected_courses else None
+    except Exception as e:
+        print(f"GUI error: {e}. Falling back to console input.")
+        return select_courses_console(available_courses)
 
 def select_courses_console(available_courses):
     """Select courses using console input."""
@@ -635,3 +737,24 @@ def get_available_courses():
         print(f"Error loading course data: {e}")
         return []
 
+# ============================================================
+# Main runner
+# ============================================================
+
+if __name__ == "__main__":
+    available_courses = get_available_courses()
+    if not available_courses:
+        print("No courses available. Please check your Excel files.")
+    else:
+        print(f"Found {len(available_courses)} available courses.")
+        selection_result = select_courses_console(available_courses)
+        if selection_result and selection_result[0]:
+            selected_courses, week_pattern = selection_result
+                
+            print(f"\nGenerating timetable for: {', '.join(selected_courses)}")
+            print("Loading data...")
+            lectures = load_lectures("Table1.xlsx", selected_courses)
+            index_map = load_indexes("Table2.xlsx", selected_courses, "all")
+
+            print("Solving...")
+            solve(lectures, index_map, selected_courses, num_solutions=3)

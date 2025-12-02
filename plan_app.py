@@ -25,16 +25,28 @@ if st.button("🔍 Optimize Timetable"):
         with st.spinner("Solving... (5–10 seconds)"):
             lectures = load_lectures("Table1.xlsx", selected)
             index_map = load_indexes("Table2.xlsx", selected, "all")
-            result = solve(lectures, index_map, selected)
+            result = solve(lectures, index_map, selected, num_solutions=3)
 
         if result["success"]:
             st.success(f"✅ Optimized! **{result['campus_days']} campus days**")
             
-            st.subheader("📌 Selected Indexes")
+            # Display multiple solutions
+            if "multiple_solutions" in result and len(result["multiple_solutions"]) > 1:
+                st.subheader("🔄 Alternative Solutions")
+                cols = st.columns(len(result["multiple_solutions"]))
+                
+                for i, solution in enumerate(result["multiple_solutions"]):
+                    with cols[i]:
+                        st.markdown(f"**Option {solution['rank']}**")
+                        st.metric("Campus Days", solution["campus_days"])
+                        indexes_text = "\n".join([f"{course}: {idx}" for course, idx in solution["indexes"].items()])
+                        st.code(indexes_text, language="text")
+            
+            st.subheader("📌 Selected Indexes (Best Solution)")
             for course, idx in result["indexes"].items():
                 st.write(f"- **{course}**: Index `{idx}`")
             
-            st.subheader("📅 Weekly Timetable")
+            st.subheader("📅 Weekly Timetable (Best Solution)")
             days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
             # Group by day
             for day_idx, day_name in enumerate(days):
